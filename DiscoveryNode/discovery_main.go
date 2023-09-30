@@ -13,6 +13,8 @@ type Node struct {
 	Availability bool
 }
 
+var NodeMap map[string]bool
+
 // function to convert a node to a string
 func (n Node) String() string {
 	return n.Addr
@@ -62,13 +64,15 @@ func udpServer(NodeList []Node) {
 				for i := 0; i < noOfNodes; i++ {
 					index := rand.Intn(len(NodeList))
 					fmt.Println("Index: ", index)
-					if checkList[index] == true {
+					if checkList[index] {
 						i = i - 1
 						continue
 					}
-					if NodeList[index].Availability {
+					if NodeList[index].Availability && NodeList[index].Addr != addr.String() {
 						list = list + NodeList[index].String() + " "
 						checkList[index] = true
+					} else {
+						i -= 1
 					}
 				}
 			}
