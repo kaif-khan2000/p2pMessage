@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/rand"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -11,6 +12,12 @@ import (
 type Node struct {
 	Addr         string
 	Availability bool
+}
+
+// struct to store the details of a node
+type Nodes struct {
+	Conn []net.Conn
+	Mux  *sync.Mutex
 }
 
 var NodeMap map[string]bool
@@ -88,8 +95,125 @@ func udpServer(NodeList []Node) {
 
 }
 
+type MemPool struct {
+	Messages map[string]time.Time
+	Mux      *sync.Mutex
+}
+
+var disconnect chan net.Conn
+var mempool MemPool
+var nodes Nodes
+
+func addMessage(message string) bool {
+	mempool.Mux.Lock()
+	//search for message in mempool
+	for i := 0; i < len(mempool.Messages); i++ {
+		_, ok := mempool.Messages[message]
+		if ok {
+			mempool.Mux.Unlock()
+			return false
+		}
+	}
+	// delete old messages if mempool is full
+	if len(mempool.Messages) == 100 {
+		// find the oldest message
+		var oldestMessage string
+		var oldestTime time.Time
+		for message, time := range mempool.Messages {
+			if oldestTime.IsZero() || time.Before(oldestTime) {
+				oldestTime = time
+				oldestMessage = message
+			}
+		}
+		// delete the oldest message
+		delete(mempool.Messages, oldestMessage)
+	}
+	mempool.Messages[message] = time.Now()
+	mempool.Mux.Unlock()
+	return true
+}
+
+// handle the connection
+func handleConnection(conn net.Conn) {
+	buffer := make([]byte, 1024)
+	for {
+		// read from the connection
+		n, err := conn.Read(buffer)
+		if err != nil {
+			fmt.Println("Error reading from connection", err)
+			break
+		}
+		message := string(buffer[0:n])
+		if !addMessage(message) {
+			continue
+		}
+		// print the message
+		fmt.Println("Message: ", message)
+		broadcastMessage(message, conn)
+	}
+	disconnect <- conn
+}
+
+func handleDisconnections() {
+	for {
+		conn := <-disconnect
+		fmt.Println("Disconnected: ", conn)
+		//delete from nodes
+		nodes.Mux.Lock()
+		for i := 0; i < len(nodes.Conn); i++ {
+			if nodes.Conn[i] == conn {
+				nodes.Conn = append(nodes.Conn[:i], nodes.Conn[i+1:]...)
+				break
+			}
+		}
+		nodes.Mux.Unlock()
+	}
+
+}
+
+// create a tcp server to listen to incoming connections
+func tcpServer() {
+	// listen to TCP port 4040
+	server, err := net.Listen("tcp", ":4041")
+	if err != nil {
+		fmt.Println("Error listening to TCP port")
+	}
+	defer server.Close()
+
+	// accept incoming connections
+	for {
+		conn, err := server.Accept()
+		if err != nil {
+			fmt.Println("Error accepting connection")
+			break
+		}
+		defer conn.Close()
+		nodes.Mux.Lock()
+		nodes.Conn = append(nodes.Conn, conn)
+		nodes.Mux.Unlock()
+		// handle the connection
+		go handleConnection(conn)
+	}
+}
+
+func broadcastMessage(message string, conn net.Conn) {
+	nodes.Mux.Lock()
+	for i := 0; i < len(nodes.Conn); i++ {
+		if nodes.Conn[i] == conn {
+			continue
+		}
+		_, err := nodes.Conn[i].Write([]byte(message))
+		if err != nil {
+			fmt.Println("Error writing to connection")
+		}
+	}
+	nodes.Mux.Unlock()
+}
+
 func main() {
 	NodeList := make([]Node, 0)
 	fmt.Println("Starting discovery node...")
-	udpServer(NodeList)
+	go udpServer(NodeList)
+	go handleDisconnections()
+	tcpServer()
 }
