@@ -64,7 +64,9 @@ func udpServer(NodeList []Node) {
 			checkList := make(map[int]bool)
 			if len(NodeList) < noOfNodes {
 				for i := 0; i < len(NodeList); i++ {
-					list = list + NodeList[i].String() + " "
+					if NodeList[i].String() != addr.String() {
+						list = list + NodeList[i].String() + " "
+					}
 				}
 				list = list + "13.49.75.242:4041"
 			} else {
